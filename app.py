@@ -2,7 +2,8 @@ import streamlit as st
 import os
 import tempfile
 from datetime import datetime
-
+import re
+import pandas as pd
 # Importing helper functions from your original code files
 # Note: You need to create processing_helpers.py first from your paste.txt file
 from processing_helpers import (
@@ -40,6 +41,7 @@ def process_pdf_and_generate_reports(
     vision_comment,
     teacher_input
 ):
+    
     """Process the PDF and generate required reports"""
     try:
         # Step 1: Extract text
@@ -51,26 +53,73 @@ def process_pdf_and_generate_reports(
         # Step 2: Admin and test info
         admin_df, tests_df, idx_when_scores_start = extract_administrative_info_and_make_df(lines_until_stop)
         new_lines_until_stop = lines_until_stop[idx_when_scores_start:]
-
+        # with st.expander("Debug: Lines till stop"):
+        #     st.write(new_lines_until_stop)
         # Step 3: Test slices
+        # st.session_state['admin_df'].at[0, 'Age']
+        # age_string = st.session_state['admin_df'].at[0, 'Age']
+
+        # match = re.match(r"(\d+)\s*years?,?\s*(\d+)\s*months?", age_string)
+
+        # if match:
+        #     years = int(match.group(1))
+        #     months = int(match.group(2)) if match.group(2) else 0
+        # else:
+        #     st.error("Age Format is not presented as expected.")
+
+        # print(years, months)
         try:
-            oral_index = new_lines_until_stop.index('Woodcock-Johnson IV Tests of Oral Language (Norms based on age 15-4)')
-            achieve_index = new_lines_until_stop.index('Woodcock-Johnson IV Tests of Achievement Form A and Extended (Norms based on age 15-4)')
+            # index_string1= f"Woodcock-Johnson IV Tests of Oral Language (Norms based on age {years}-{months})" 
+            # index_string2 = f'Woodcock-Johnson IV Tests of Achievement Form A and Extended (Norms based on age {years}-{months})'
+            # f'"Woodcock-Johnson IV Tests of Oral Language (Norms based on age {years}-{months})"'
+            # print(index_string1)
+            # print(index_string2)
+            # oral_index = new_lines_until_stop.index(index_string1)
+            # achieve_index = new_lines_until_stop.index(index_string2)
+            oral_index = next(
+                (i for i, line in enumerate(new_lines_until_stop)
+                  if line.strip().startswith("Woodcock-Johnson IV Tests of Oral Language")),
+                    None)
+            achieve_index = next(
+                (i for i, line in enumerate(new_lines_until_stop)
+                  if line.strip().startswith("Woodcock-Johnson IV Tests of Achievement")),
+                    None)
+            if oral_index is None or achieve_index is None:
+                raise ValueError
         except ValueError:
             st.error("Could not find expected test sections in the PDF. Please check the format.")
             return None, None
+        if oral_index is None or achieve_index is None:
+                raise ValueError
+        # st.write(f"Oral index: {oral_index}")
+        # st.write(f"Achievement index: {achieve_index}")
+        # st.write(f"Lines in new_lines_until_stop: {len(new_lines_until_stop)}")
 
         oral_test_lines = new_lines_until_stop[oral_index:achieve_index]
         achieve_test_lines = new_lines_until_stop[achieve_index:]
 
+        # with st.expander("Debug: Oral test lines"):
+        #     st.write(oral_test_lines)
+
+        # with st.expander("Debug: Achievement test lines"):
+        #     st.write(achieve_test_lines)
+
+        expected_tests = ["READING", "BROAD READING", "BASIC READING SKILLS", "READING COMPREHENSION", "READING FLUENCY", "MATHEMATICS", "BROAD MATHEMATICS", "MATH CALCULATION SKILLS", "MATH PROBLEM SOLVING", "WRITTEN LANGUAGE", "BROAD WRITTEN LANGUAGE", "WRITTEN EXPRESSION", "ACADEMIC SKILLS", "ACADEMIC FLUENCY", "ACADEMIC APPLICATIONS", "BRIEF ACHIEVEMENT", "BROAD ACHIEVEMENT", "Letter-Word Identification", "Passage Comprehension", "Sentence Reading Fluency", "Word Attack", "Reading Recall", "Oral Reading", "Applied Problems", "Calculation", "Math Facts Fluency", "Number Matrices", "Spelling", "Writing Samples", "Sentence Writing Fluency"
+]
+        
         # Step 4: Extract and clean test data
         oral_df = extract_test_data(oral_test_lines)
         achievement_df = extract_test_data(achieve_test_lines)
+        
 
         oral_df = order_dataframe_by_uppercase_in_column(oral_df, 'Test/Cluster')
         achievement_df = order_dataframe_by_uppercase_in_column(achievement_df, 'Test/Cluster')
         oral_df.rename(columns={'Test/Cluster': 'Test'}, inplace=True)
         achievement_df.rename(columns={'Test/Cluster': 'Test'}, inplace=True)
+
+        for test_name in expected_tests:
+            if test_name not in achievement_df['Test'].values:
+                st.warning(f"Expected test missing: {test_name}")
 
         # Step 5: Create banded bell curve report
         oral_df.title = "Woodcock-Johnson IV Tests of Oral Language"
@@ -97,7 +146,13 @@ def process_pdf_and_generate_reports(
 
         # Extract specific test scores and ranges
         # Oral language tests
-        context = extract_ranges(oral_df, achievement_df)
+        try:
+            context = extract_ranges(oral_df, achievement_df)
+        except Exception as e:
+           st.error(f"Error extracting ranges: {str(e)}")
+           import traceback
+           st.code(traceback.format_exc())
+           return None, None
         
         # Add base context
         context.update({
@@ -136,9 +191,24 @@ def extract_ranges(oral_df, achievement_df):
     
     # Function to safely get ranges
     def get_range(df, test_name, column='SS'):
-        score = df.loc[df['Test'].str.upper() == test_name.upper(), column]
-        return classify_band(score.iloc[0]) if not score.empty else "N/A"
-    
+        # # df['Test'] = df['Test'].str.upper().str.replace(r'\s+', ' ', regex=True).str.strip()
+        # score = df.loc[df['Test'].str.upper() == test_name.upper(), column]
+        # # return classify_band(score.iloc[0]) if not score.empty else "N/A"
+        # if not score.empty:
+        #     return classify_band(score.iloc[0])
+        # else:
+        #     st.warning(f"Could not find {test_name} test score")
+        #     return "N/A"
+        # st.write("Available tests in Achievement DF:")
+        # st.write(achievement_df["Test"].tolist())
+        matches = df[df['Test'].str.upper().str.contains(test_name.upper(), na=False)]
+        if not matches.empty:
+            return classify_band(matches[column].iloc[0])
+        else:
+            st.warning(f"Could not find test score for: {test_name}")
+            return "N/A"
+
+      
     # Oral language tests
     try:
         ranges['broad_oral_range'] = get_range(oral_df, "BROAD ORAL LANGUAGE")
@@ -315,6 +385,7 @@ def main():
                     mime="application/pdf",
                     key="download_pdf"
                 )
+
 
 if __name__ == "__main__":
     main()

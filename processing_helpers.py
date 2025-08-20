@@ -102,6 +102,7 @@ def extract_test_data(test_list):
     """Extract SS and PR from test scores"""
     rows = []
     for line in test_list:
+        
         tokens = line.strip().split()
         # Skip lines that are too short or clearly not test data
         if len(tokens) < 5:
@@ -109,8 +110,8 @@ def extract_test_data(test_list):
 
         try:
             # Try to parse the last two tokens as integers for SS and PR
-            ss = int(tokens[-2])
-            pr = int(tokens[-1])
+            ss = float(tokens[-2])
+            pr = float(tokens[-1])
 
             # Assume test/cluster name is everything before the first number (W score)
             for i, token in enumerate(tokens):
